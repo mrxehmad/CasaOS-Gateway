@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	// Required for `//go:embed` of `gateway.ini.sample`.
 	_ "embed"
 	"errors"
 	"flag"
@@ -65,20 +66,18 @@ func init() {
 
 	// create default config file if not exist
 	ConfigFilePath := filepath.Join(constants.DefaultConfigPath, common.GatewayName+"."+common.GatewayConfigType)
-	if _, err := os.Stat(ConfigFilePath); os.IsNotExist(err) {
-		fmt.Println("config file not exist, create it")
-		// create config file
-		file, err := os.Create(ConfigFilePath)
-		if err != nil {
-			panic(err)
-		}
-		defer file.Close()
+	if err := os.MkdirAll(filepath.Dir(ConfigFilePath), 0o755); err != nil {
+		panic(err)
+	}
 
-		// write default config
-		_, err = file.WriteString(_confSample)
-		if err != nil {
+	file, err := os.OpenFile(ConfigFilePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err == nil {
+		defer file.Close()
+		if _, err := file.WriteString(_confSample); err != nil {
 			panic(err)
 		}
+	} else if !errors.Is(err, os.ErrExist) {
+		panic(err)
 	}
 
 	config, err := common.LoadConfig()
@@ -147,6 +146,7 @@ func main() {
 	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	kill := make(chan os.Signal, 1)
 	signal.Notify(kill, syscall.SIGTERM, syscall.SIGINT)
 
@@ -326,7 +326,7 @@ func run(
 	})
 }
 
-func reloadGateway(address string, port string, route *http.ServeMux) error {
+func reloadGateway(address, port string, route *http.ServeMux) error {
 	listener, err := net.Listen("tcp", net.JoinHostPort(address, port))
 	if err != nil {
 		return err
@@ -423,7 +423,7 @@ func writePidFile(runtimePath string) (string, error) {
 	return filename, os.WriteFile(filepath, []byte(fmt.Sprintf("%d", os.Getpid())), 0o600)
 }
 
-func writeAddressFile(runtimePath string, filename string, address string) (string, error) {
+func writeAddressFile(runtimePath, filename, address string) (string, error) {
 	err := os.MkdirAll(runtimePath, 0o755)
 	if err != nil {
 		return "", err
