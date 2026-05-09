@@ -46,6 +46,8 @@ var (
 	_confSample string
 )
 
+const gatewayURLFilename = "gateway.url"
+
 func init() {
 	versionFlag := flag.Bool("v", false, "version")
 	wwwPathFlag := flag.String("w", filepath.Join(constants.DefaultDataPath, "www"), "www path")
@@ -102,6 +104,12 @@ func init() {
 		panic(err)
 	}
 
+	gatewayAddress := config.GetString(common.ConfigKeyGatewayAddr)
+	if err := _state.SetGatewayAddress(gatewayAddress); err != nil {
+		logger.Error("Failed to set gateway address", zap.Any("error", err), zap.Any(common.ConfigKeyGatewayAddr, gatewayAddress))
+		panic(err)
+	}
+
 	if err := _state.SetWWWPath(*wwwPathFlag); err != nil {
 		logger.Error("Failed to set www path", zap.Any("error", err), zap.String("wwwpath", *wwwPathFlag))
 		panic(err)
@@ -127,7 +135,7 @@ func main() {
 
 	defer cleanupFiles(
 		_state.GetRuntimePath(),
-		pidFilename, external.ManagementURLFilename, external.StaticURLFilename,
+		pidFilename, external.ManagementURLFilename, external.StaticURLFilename, gatewayURLFilename,
 	)
 
 	defer func() {
@@ -268,10 +276,10 @@ func run(
 				}
 
 				_state.OnGatewayPortChange(func(port string) error {
-					return reloadGateway(port, route)
+					return reloadGateway(_state.GetGatewayAddress(), port, route)
 				})
 
-				if err := reloadGateway(_state.GetGatewayPort(), route); err != nil {
+				if err := reloadGateway(_state.GetGatewayAddress(), _state.GetGatewayPort(), route); err != nil {
 					return err
 				}
 
@@ -318,8 +326,8 @@ func run(
 	})
 }
 
-func reloadGateway(port string, route *http.ServeMux) error {
-	listener, err := net.Listen("tcp", net.JoinHostPort("", port))
+func reloadGateway(address string, port string, route *http.ServeMux) error {
+	listener, err := net.Listen("tcp", net.JoinHostPort(address, port))
 	if err != nil {
 		return err
 	}
@@ -352,6 +360,10 @@ func reloadGateway(port string, route *http.ServeMux) error {
 	// test if gateway is running
 	url := "http://" + addr + "/ping"
 	if err := checkURLWithRetry(url, 10); err != nil {
+		return err
+	}
+
+	if _, err := writeAddressFile(_state.GetRuntimePath(), gatewayURLFilename, net.JoinHostPort(address, port)); err != nil {
 		return err
 	}
 
